@@ -1,0 +1,3 @@
+To run, simple go to a terminal, navigate to the "bouncer" directory, and run:
+% make all
+% ./a.out
