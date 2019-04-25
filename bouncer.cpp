@@ -6,10 +6,15 @@
 #include "bouncer.h"
 #include <ostream>
 #include <fstream>
-int main()
-{
-  std::cout << "Starting up the Bouncer" << std::endl;
-  return 0;
+
+int main(int argc, char const *argv[]){
+    std::cout << "Starting up the Bouncer" << std::endl;
+    std::string file_name = argv[1];
+        if(file_name.substr(file_name.length()-4,file_name.length()) != ".jpg"){
+                std::cout << "File must be a jpg!" << std::endl;
+                return 1;
+        }
+    std::cout << "Got the right file type" <<std::endl;
 }
 
 
