@@ -4,7 +4,6 @@
  */
 
 
-#include "string_set.h"
 #include <iostream>
 #include <string>
 #include <fstream>
@@ -14,7 +13,7 @@
 #define NODE_H
 //Place to define neccessary componenets of our bouncer class
 
-void WriteBuffer(std::string filename, char[] buffer);
+void WriteBuffer(char* filename, char* buffer);
 
 
 #endif

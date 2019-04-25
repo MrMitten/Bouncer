@@ -4,7 +4,8 @@
  */
 
 #include "bouncer.h"
-
+#include <ostream>
+#include <fstream>
 int main()
 {
   std::cout << "Starting up the Bouncer" << std::endl;
@@ -16,8 +17,9 @@ int main()
 /**
  *@brief This simply writes a char[] buffer to a string filename. 
  */
-void WriteBuffer(std::string filename, char [] buffer){
-    std::ostream opener(filename);
+void WriteBuffer(char* filename, char* buffer){
+    std::ofstream opener;
+    opener.open(filename);
     if(opener.is_open()){
         opener << buffer;
     }
