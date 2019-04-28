@@ -22,7 +22,7 @@ extern "C" {
 }
 //Place to define neccessary componenets of our bouncer class
 int decode(AVCodecContext *avctx, AVFrame *frame, bool got, AVPacket *pkt);
-int encode(AVCodecContext *avctx, AVPacket *pkt, int *got_packet, AVFrame *frame);
+void encode(AVCodecContext *avctx, AVFrame *frame, AVPacket *pkt);
 AVFrame* getBackground(const char *filename);
 AVFrame* coolConvert(AVFrame * input_frame);
 void saveCool(int frameNum, AVFrame * background);

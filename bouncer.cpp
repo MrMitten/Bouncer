@@ -37,43 +37,58 @@ void saveCool(int frameNum, AVFrame * background){
     int width = coolContext->width;
     int height = coolContext->height;
     std::cout << "3" << std::endl;
-
-    coolContext->time_base = (AVRational){1,24};
+    AVRational preTime = coolContext->time_base;
+    AVRational preRate = coolContext->framerate;
+    coolContext->time_base = (AVRational){1,25};
+    coolContext->framerate = (AVRational){25,1};
     avcodec_open2(coolContext, coolCodec, NULL);
+    coolContext->time_base = preTime;
+    coolContext->framerate = preRate;
     std::cout << "4" << std::endl;
     std::string coolName = "cool";
-    if(frameNum <10)
+    std::cout << "Projected Name: " << coolName << frameNum << std::endl;
+    if(frameNum < 10)
     {
-        coolName+="00" +frameNum;
+        coolName+="00";
+        coolName+=frameNum;
     }
-    else if(frameNum <100)
+    else if(frameNum < 100)
     {
-        coolName+="0" +frameNum;
+        coolName+="0";
+        coolName+=frameNum;
     }
     else
     {
         coolName+= frameNum;
     }
 
-    std::cout << coolName << std::endl;
+    std::cout << "Actual Name: "<< coolName << std::endl;
 
 
     AVFrame *coolFrame = av_frame_alloc();
-
+    std::cout <<"save" << std::endl;
     coolFrame->format = coolContext->pix_fmt;
     coolFrame->height = coolContext->height;
     coolFrame->width = coolContext->width;
-
+    std::cout <<"save2" << std::endl;
+    std::cout << background->data << std::endl;
+    std::cout <<"_______________________________________________" << std::endl;
     coolFrame = coolConvert(background);
+    std::cout << *coolFrame->data <<std::endl;
     std::cout <<"save5" << std::endl;
     AVPacket coolPacket;
-    av_init_packet(&coolPacket);
     coolPacket.size = 0;
     coolPacket.data = NULL;
+    av_init_packet(&coolPacket);
     int setYet = 0;
     std::cout <<"save6" << std::endl;
-    encode(coolContext, &coolPacket, &setYet ,coolFrame);
+    //coolContext->codec = coolCodec;   // set the codec to spff 
+    //avcodec_send_frame(coolContext, coolFrame);
+    //avcodec_receive_packet(coolContext, &coolPacket);
+    encode(coolContext,coolFrame, &coolPacket);//got rid of setYet for
     std::cout <<"save6.1" << std::endl;
+    coolName += ".cool";
+    std::cout <<coolPacket.data <<std::endl;
     std::ofstream coolOutput;
     coolOutput.open(coolName.c_str());
     std::cout <<"save7" << std::endl;
@@ -102,18 +117,20 @@ AVFrame* getBackground(const char *filename)
     //FF_DISABLE_DEPRECATION_WARNINGS
     //Using the filename, create an AVFormatContext
     AVFormatContext * jpgFormat = NULL;
-    avformat_open_input( &jpgFormat, filename, NULL, NULL);
+
+    int result = avformat_open_input( &jpgFormat, filename, NULL, NULL);
+    std::cout << result <<std::endl;
     avformat_find_stream_info(jpgFormat, NULL);
     av_dump_format(jpgFormat, 0, filename, 0);
-
-    AVCodecContext *jpgCodec = avcodec_alloc_context3(NULL);
+    
 
     //jpgCodec = jpgFormat->streams[0]->codec; // get the stream at its start
-    int check = avcodec_parameters_to_context(jpgCodec, jpgFormat->streams[0]->codecpar);
-    //std::cout << jpgCodec << std::endl;
-    jpgCodec->pix_fmt = AV_PIX_FMT_YUV420P; // Set the coolFormat to a standard JPG.
-    AVCodec * jpgDec = avcodec_find_decoder(jpgCodec->codec_id);
 
+    //std::cout << jpgCodec << std::endl;
+    //jpgCodec->pix_fmt = AV_PIX_FMT_YUV420P; // Set the coolFormat to a standard JPG.
+    AVCodec * jpgDec = avcodec_find_decoder(jpgFormat->streams[0]->codecpar->codec_id);
+    AVCodecContext *jpgCodec = avcodec_alloc_context3(jpgDec);
+    int check = avcodec_parameters_to_context(jpgCodec, jpgFormat->streams[0]->codecpar);
     // Open the Codec
     avcodec_open2(jpgCodec, jpgDec, NULL);
 
@@ -124,26 +141,71 @@ AVFrame* getBackground(const char *filename)
     coolFrame->height = jpgCodec->height;
     coolFrame->width = jpgCodec->width;
     bool done;
-    AVPacket jpgPacket;
+    std::cout << "test" << std::endl;
+    AVPacket *jpgPacket;
+    jpgPacket = av_packet_alloc();
     int decode_result;
     int i = 5;
-    while(av_read_frame(jpgFormat, &jpgPacket) >= 0)
-    {
-        if(jpgPacket.stream_index == 0)
-        {
-        //Decode the frame from the first stream index
-        decode_result = decode(jpgCodec,coolFrame, done, &jpgPacket);
+    FILE *f;
+    f = fopen(filename, "rb");
+    while (!feof(f)) {
+        AVCodecParserContext * parser = av_parser_init(jpgCodec->codec_id);
+        std::cout << "test2" << std::endl;
+        uint8_t inbuf[4096];
+        /* read raw data from the input file */
+        size_t data_size = fread(inbuf, 1, 4096, f);
+        if (!data_size)
+            break;
+        std::cout << "test3" << std::endl;
+        /* use the parser to split the data into frames */
+        uint8_t* data = inbuf;
+        
+        while (data_size > 0) {
+            std::cout << "testloop1" << std::endl;
+            int ret = av_parser_parse2(parser, jpgCodec, &jpgPacket->data, &jpgPacket->size,
+                                   data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
+            if (ret < 0) {
+                fprintf(stderr, "Error while parsing\n");
+                exit(1);
+            }
+            std::cout << "testloop2" << std::endl;
+            data      += ret;
+            data_size -= ret;
+            bool gotData;
+            
+            if (jpgPacket->size){
+                std::cout << "testloopif3" << std::endl;
+                decode(jpgCodec, coolFrame, gotData, jpgPacket);
+            }
+        }
 
-        if(done)
-        {
+    }
+        fclose(f);
+    /*while(av_read_frame(jpgFormat, &jpgPacket) >= 0)
+    //{
+        //if(jpgPacket.stream_index == 0)
+        //{
+        //Decode the frame from the first stream index
+        //decode_result = decode(jpgCodec,coolFrame, done, &jpgPacket);
+
+        av_read_frame(jpgFormat, &jpgPacket); // Read frames and save  - source: Dranger
+        std::cout << jpgPacket.data << std::endl;
+        // Decode video frames - source: all other deprecations
+        avcodec_send_packet(jpgCodec, &jpgPacket);
+        avcodec_receive_frame(jpgCodec, coolFrame);
+        std::cout << *coolFrame->data << std::endl;
+
+        //if(done)
+        //{
             // Convert the frame to cool coolFormat
             std::cout <<"now converting" << std::endl;
             coolFrame = coolConvert(coolFrame);
-        }
-        }
+            std::cout << *coolFrame->data << "Buggy bug?" <<std::endl;
+        //}
+        //}*/
         // Free the packet
-        av_packet_unref(&jpgPacket);
-    }
+        av_packet_unref(jpgPacket);
+    //}
     // Closes the codec
     avcodec_close(jpgCodec);
     // Cloes the coolFormat
@@ -154,14 +216,14 @@ AVFrame* getBackground(const char *filename)
 
 // Used to decode a frame, given a context, frame, and passing a bool
 // found at https://blogs.gentoo.org/lu_zero/2016/03/29/new-avcodec-api/
-int decode(AVCodecContext *context, AVFrame *frame, bool gotData, AVPacket *pkt)
+int decode(AVCodecContext *context, AVFrame *frame, bool gotData, AVPacket *jpgPacket)
 {
     int ret;
 
     gotData = false;
 
-    if (pkt) {
-        ret = avcodec_send_packet(context, pkt);
+    if (jpgPacket) {
+        ret = avcodec_send_packet(context, jpgPacket);
         // In particular, we don't expect AVERROR(EAGAIN), because we read all
         // decoded frames with avcodec_receive_frame() until done.
         if (ret < 0)
@@ -178,17 +240,19 @@ int decode(AVCodecContext *context, AVFrame *frame, bool gotData, AVPacket *pkt)
 }
 
 // found at https://blogs.gentoo.org/lu_zero/2016/03/29/new-avcodec-api/
-int encode(AVCodecContext *avctx, AVPacket *pkt, int *got_packet, AVFrame *frame)
+/*int encode(AVCodecContext *avctx, AVPacket *jpgPacket, int *got_packet, AVFrame *frame)
 {
     int ret;
 
     *got_packet = 0;
     std::cout <<"enc1" << std::endl;
     std::cout <<avctx <<" : " << frame << std::endl;
-    avcodec_send_frame(avctx, frame);
+    ret = av_frame_make_writable(frame);
+    std::cout <<"enc1.5:" << ret << std::endl;
+    ret = avcodec_send_frame(avctx, frame);
 
     std::cout <<"enc2" << std::endl;
-    ret = avcodec_receive_packet(avctx, pkt);
+    ret = avcodec_receive_packet(avctx, jpgPacket);
     if (!ret)
         *got_packet = 1;
         std::cout <<"enc3" << std::endl;
@@ -196,9 +260,32 @@ int encode(AVCodecContext *avctx, AVPacket *pkt, int *got_packet, AVFrame *frame
         return 0;
 
     return ret;
+}*/
+
+void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *jpgPacket)
+{
+    int ret;
+    /* send the frame to the encoder */
+    if (frame)
+        printf("Send frame %3"PRId64"\n", frame->pts);
+    ret = avcodec_send_frame(enc_ctx, frame);
+    if (ret < 0) {
+        fprintf(stderr, "Error sending a frame for encoding\n");
+        exit(1);
+    }
+    while (ret >= 0) {
+        ret = avcodec_receive_packet(enc_ctx, jpgPacket);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            fprintf(stderr, "Error during encoding\n");
+            exit(1);
+        }
+        //printf("Write packet %3"PRId64" (size=%5d)\n", jpgPacket->pts, jpgPacket->size);
+        //fwrite(jpgPacket->data, 1, jpgPacket->size, outfile);
+        //av_packet_unref(jpgPacket);
+    }
 }
-
-
 
 /**
  * Converts the Frame into the coolest coolFormat
@@ -218,7 +305,7 @@ AVFrame* coolConvert(AVFrame * input_frame)
     int num_bytes;
     std::cout <<"test1" << std::endl;
     // Determine required buffer size and allocate buffer
-    num_bytes = av_image_get_buffer_size(coolFormat, input_frame->width, input_frame->height, 32);
+    num_bytes = av_image_get_buffer_size(coolFormat, input_frame->width, input_frame->height, 1);
     buffer = (uint8_t *)av_malloc(num_bytes);
     std::cout <<"test2" << std::endl;
     coolFrame->format = coolFormat;
