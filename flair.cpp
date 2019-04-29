@@ -190,10 +190,8 @@ void makeBall(AVFrame *coolFrame, int Xcord, int Ycord, int ballSize)
       if (ballSize > dis)//only draw on pixels within the ball, so check pixel distance from center
       {
         // based off the pixel dis from center calculate the amount of green to simulate shading.
-        //IMPORTANT NOTE: so this is normal shading below. once you are done testing our code,
-        //on the command do a "make flair" which will use our other file that makes the ball glowing!
-        // double green = ((dis)*10 + yPos) % 255; // this is the glowing ball code.
-        double green = ((dis)*10) % 255; //normal not as fun but correctly shaded ball
+        //NOTE: we totally could have done a ball with normal shading, but we thought the animated pulsating looked way cooler
+        double green = ((dis)*10 + yPos) % 255;
     
         coolFrame->data[0][i*coolFrame->linesize[0]+j] = 61; // put the red pixel data in the frame where we wanna draw our ball
         coolFrame->data[0][i*coolFrame->linesize[0]+j+1] = (int)green;// put in green with a modifier so it changes based off dis to the center (so it looks .cool)
