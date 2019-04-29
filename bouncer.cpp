@@ -200,7 +200,7 @@ void saveCool(AVFrame *inFrame, int frameNum)
   encode(coolContext, &coolPacket, coolFrame, &is_set);
 
   char coolName[16];
-  sprintf(coolName, "Output/Frame%03d.cool", frameNum);
+  sprintf(coolName, "frame%03d.cool", frameNum);
   FILE *finishedFrame = fopen(coolName, "wb");
 
   if(1 == is_set)
