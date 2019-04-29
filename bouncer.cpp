@@ -2,254 +2,280 @@
  * Noah Harren, Bryan Bylsma
  * April 24, 2019
  */
+#include <iostream>
+#include <string>
+#include <fstream>
+#include <ostream>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <stdlib.h>
+extern "C" {
+#include "libavcodec/avcodec.h"
+#include "libavformat/avformat.h"
+#include "libavutil/imgutils.h"
+#include "libavutil/pixfmt.h"
+#include "libswscale/swscale.h"
+}
+int decode(AVCodecContext *coolContext, AVFrame *coolFrame, int * gotData, AVPacket *jpgPacket);
+int encode(AVCodecContext *avctx, AVPacket *jpgPacket, AVFrame *coolFrame, int *got_packet);
+void makeBall(AVFrame *coolFrame, int Xcord, int Ycord, int ballSize);
+AVFrame* makeRGB(AVFrame * inFrame, AVPixelFormat form);
+AVFrame* getBackground(char *coolName);
+void saveCool(AVFrame *inFrame, int frameNum);
 
+/**
+ * @brief This method is used to draw a ball onto a frame. It takes in a "start" Y and X cord, a frame to draw on, and a ball Size. It
+ * moves the ball in the frame using some simple math. The ball that is drawn is blue, with animated shading.
+ **/
+void makeBall(AVFrame *coolFrame, int Xcord, int Ycord, int ballSize)
+{
+  //static double used for storing the Y cord out of scope
+  double static moveY = 0;
+  moveY = moveY + .16; //move our Y by a set amount per frame
+  moveY = fmod(moveY,(3 * 3.14159));//mod it by a the ends of a sin curve. We use 3 to produce a little "bump" at the midpoint of the anim.
+  int yPos =  -1 *Ycord/2.5* sin(moveY);//set position using sin func
+  Ycord -= yPos; //Adjust new Y acoord-ingly
 
-#include "bouncer.h"
-#include <malloc.h>
-int main(int argc, char const *argv[]){
-    std::cout << "Starting up the Bouncer" << std::endl;
-    std::string file_name = argv[1];
-        if(file_name.substr(file_name.length()-4,file_name.length()) != ".jpg"){
-                std::cout << "File must be a jpg!" << std::endl;
-                return 1;
-        }
-    std::cout << "Got the right file type" <<std::endl;
-    AVFrame * background = getBackground(file_name.c_str());
-    std::cout << "Got the background image" <<std::endl;
-    //Do stuff with it!
+  //Used to check if we are moving left or right
+  bool static right = true;
+  //Stores the current X modifier
+  int static precord = 0;
+  if(right){
+  precord += coolFrame->width*.01; //move 1% of the screen width
+  Xcord += precord;//Set as new cord
+  if(Xcord > (coolFrame->width - ballSize/2))//if we have "hit" the end of the image
+    right = false;
+  }
+  else{//going left
+  precord -= coolFrame->width*.01;//move 1% of the screen width
+  Xcord += precord;
+  if(Xcord < ballSize/2)//if we have "hit" the start of the image
+    right = true;
+  }
+  for (int i = 0; i < coolFrame->height; i++)
+  {
+    for (int j = 0; j < coolFrame->width * 3; j=j+3)
+    {
+      //Calculate the distance from midpoint of our ball
+      int y = i;
+      int x = j / 3;
+      y = (Ycord - y)*(Ycord - y);
+      x = (Xcord - x)*(Xcord - x);
 
-    saveCool(1,background);
-    //Writing Loop
-    for(int i = 0; i < 300; i++){
-        //handle changes
-        //write frame
+      int dis = sqrt( x  + y );
+
+      if (ballSize > dis)//only draw on pixels within the ball, so check pixel distance from center
+      {
+        // based off the pixel dis from center calculate the amount of green to simulate shading.
+        //NOTE: we totally could have done a ball with normal shading, but we thought the animated pulsating looked way cooler
+        double green = ((dis)*10 + yPos) % 255;
+    
+        coolFrame->data[0][i*coolFrame->linesize[0]+j] = 61; // put the red pixel data in the frame where we wanna draw our ball
+        coolFrame->data[0][i*coolFrame->linesize[0]+j+1] = (int)green;// put in green with a modifier so it changes based off dis to the center (so it looks .cool)
+        coolFrame->data[0][i*coolFrame->linesize[0]+j+2] = 239;  // put in the blue    
+      }
     }
+  }
 }
 
-void saveCool(int frameNum, AVFrame * background){
-    std::cout << "1" << std::endl;
-    AVCodec *coolCodec = avcodec_find_encoder(AV_CODEC_ID_COOL);
-    AVCodecContext *coolContext = avcodec_alloc_context3(coolCodec);
-    std::cout << "2" << std::endl;
-    coolContext->pix_fmt = AV_PIX_FMT_RGB24;
-    coolContext->height = background->height;
-    coolContext->width = background->width;
-    int width = coolContext->width;
-    int height = coolContext->height;
-    std::cout << "3" << std::endl;
-    AVRational preTime = coolContext->time_base;
-    AVRational preRate = coolContext->framerate;
-    coolContext->time_base = (AVRational){1,25};
-    coolContext->framerate = (AVRational){25,1};
-    avcodec_open2(coolContext, coolCodec, NULL);
-    coolContext->time_base = preTime;
-    coolContext->framerate = preRate;
-    std::cout << "4" << std::endl;
-    std::string coolName = "cool";
-    std::cout << "Projected Name: " << coolName << frameNum << std::endl;
-    if(frameNum < 10)
+//Code below modified from https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/scaling_video.c 
+//method is used to translate whatever format we get into rgb4 since that is what our cool files use.
+AVFrame* makeRGB(AVFrame * inFrame, AVPixelFormat form)
+{
+  std::cout << "entering convert" << std::endl;
+  //Allocate the converted frame and set its params
+  AVFrame * conFrame = av_frame_alloc();
+
+  conFrame->height = inFrame->height;
+  conFrame->format = AV_PIX_FMT_RGB24;
+  conFrame->width =  inFrame->width;
+ 
+  //Used for rescalling and converting between formats
+  struct SwsContext *scalar = sws_getContext(inFrame->width,inFrame->height,form,conFrame->width,conFrame->height,AV_PIX_FMT_RGB24,SWS_BICUBIC,NULL,NULL,NULL);
+  //calculate the size of our temporary buffer, and create it
+  int buffyBities = av_image_get_buffer_size(AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
+  uint8_t *buffer = (uint8_t *)av_malloc(buffyBities * sizeof(uint8_t));
+
+  //fill the conFrame with "empty" data
+  av_image_fill_arrays(conFrame->data,conFrame->linesize, buffer, AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
+  //Scale the inFrame image into rgb24, send into conFrame.
+  sws_scale (scalar,(const uint8_t * const *)inFrame->data,inFrame->linesize,0,inFrame->height,conFrame->data,conFrame->linesize);
+
+  av_free(scalar);
+  //return the converted frame
+  return conFrame;
+}
+
+/**
+ * @brief getBackground is used to get the background frame we will copy from to create all the frames of our movie. Takes in a name to convert
+ * */
+AVFrame* getBackground(char *coolName)
+{
+
+  AVFormatContext * bgFormat = NULL;
+  //Open the incoming image by filename
+  avformat_open_input( &bgFormat, coolName, NULL, NULL);
+  //Grab the jpg streams
+  avformat_find_stream_info(bgFormat, NULL);
+  //dump the info to console(used to see if it worked)
+  av_dump_format(bgFormat, 0, coolName, 0);
+
+  
+  //Create our jpg decoder
+  AVCodec * bgDecoder = avcodec_find_decoder(bgFormat->streams[0]->codecpar->codec_id);
+
+  //Create an associated context
+  AVCodecContext *bgContext = avcodec_alloc_context3(bgDecoder);
+  //Get the codec params, used to update neccessary info
+  avcodec_parameters_to_context(bgContext, bgFormat->streams[0]->codecpar);
+  bgContext->pix_fmt = AV_PIX_FMT_YUV420P; //hardset(needed later in the convert)
+
+  //open the decoder
+  avcodec_open2(bgContext, bgDecoder, NULL);
+
+  //allocate space for our return frame, set appropriate heights, width.
+  AVFrame * bgFrame = av_frame_alloc();
+
+  bgFrame->height = bgContext->height;
+  bgFrame->width = bgContext->width;
+
+  //used similar to a bool
+  int done;
+  // allocate the data packet
+  AVPacket jpgPacket;
+  //start read
+  while(av_read_frame(bgFormat, &jpgPacket) >= 0) // this while loop modified from https://github.com/MurthyA/FFmpeg-tutorial-samples/blob/master/tutorial01.c lines 144 - 160
+  {
+    if(jpgPacket.stream_index == 0)
     {
-        coolName+="00";
-        coolName+=frameNum;
-    }
-    else if(frameNum < 100)
-    {
-        coolName+="0";
-        coolName+=frameNum;
-    }
-    else
-    {
-        coolName+= frameNum;
+      //Decode the packet into a frame
+      decode(bgContext, bgFrame, &done, &jpgPacket);
+
+      if(done)
+      {
+        //convert the frame to RGB24
+        bgFrame = makeRGB(bgFrame, AV_PIX_FMT_YUV420P);
+      }
     }
 
-    std::cout << "Actual Name: "<< coolName << std::endl;
+    av_packet_unref(&jpgPacket);
+  }
+  avformat_close_input(&bgFormat);
+  avcodec_close(bgContext);
+  return bgFrame;
+}
 
 
-    AVFrame *coolFrame = av_frame_alloc();
-    std::cout <<"save" << std::endl;
-    coolFrame->format = coolContext->pix_fmt;
-    coolFrame->height = coolContext->height;
-    coolFrame->width = coolContext->width;
-    std::cout <<"save2" << std::endl;
-    std::cout << background->data << std::endl;
-    std::cout <<"_______________________________________________" << std::endl;
-    coolFrame = coolConvert(background);
-    std::cout << *coolFrame->data <<std::endl;
-    std::cout <<"save5" << std::endl;
-    AVPacket coolPacket;
-    coolPacket.size = 0;
-    coolPacket.data = NULL;
-    av_init_packet(&coolPacket);
-    int setYet = 0;
-    std::cout <<"save6" << std::endl;
-    //coolContext->codec = coolCodec;   // set the codec to spff 
-    //avcodec_send_frame(coolContext, coolFrame);
-    //avcodec_receive_packet(coolContext, &coolPacket);
-    encode(coolContext,coolFrame, &coolPacket);//got rid of setYet for
-    std::cout <<"save6.1" << std::endl;
-    coolName += ".cool";
-    std::cout <<coolPacket.data <<std::endl;
-    std::ofstream coolOutput;
-    coolOutput.open(coolName.c_str());
-    std::cout <<"save7" << std::endl;
-    if( coolOutput.is_open() && setYet)
-    {
-        coolOutput << coolPacket.data;
-        coolOutput.close();
-        av_packet_unref(&coolPacket);
-    }
-        std::cout <<"save8" << std::endl;
-    av_free(coolFrame);
-    avcodec_close(coolContext);
-    av_free(coolContext);
+void saveCool(AVFrame *inFrame, int frameNum)
+{
+  int is_set = 0;
 
+  AVCodec *coolCodec = avcodec_find_encoder(AV_CODEC_ID_COOL);
+
+  AVCodecContext *coolContext = avcodec_alloc_context3(coolCodec);
+
+  AVFrame *coolFrame = av_frame_alloc();
+
+  coolContext->width = inFrame->width;
+  coolFrame->width = coolContext->width;
+
+  coolContext->height = inFrame->height;
+  coolFrame->height = coolContext->height;
+
+  coolContext->time_base = (AVRational){1,25};
+  coolContext->framerate = (AVRational){25,1};
+
+  coolContext->pix_fmt = AV_PIX_FMT_RGB24;
+  coolFrame->format = coolContext->pix_fmt;
+  avcodec_open2(coolContext, coolCodec, NULL);
+
+  //TODO BRYAN when i get back!
+  coolFrame = makeRGB(inFrame, coolContext->pix_fmt);
+
+
+  AVPacket coolPacket;
+  av_init_packet(&coolPacket);
+
+  encode(coolContext, &coolPacket, coolFrame, &is_set);
+
+  char coolName[16];
+  sprintf(coolName, "Output/Frame%03d.cool", frameNum);
+  FILE *finishedFrame = fopen(coolName, "wb");
+
+  if(1 == is_set)
+  {
+    
+    fwrite(coolPacket.data, 1, coolPacket.size, finishedFrame);
+    av_packet_unref(&coolPacket);
   }
 
-
-
-
-
-/*
- * Returns an AVFrame taken from the command line jpg
- */
-AVFrame* getBackground(const char *filename)
-{
-    //FF_DISABLE_DEPRECATION_WARNINGS
-    //Using the filename, create an AVFormatContext
-    AVFormatContext * jpgFormat = NULL;
-
-    int result = avformat_open_input( &jpgFormat, filename, NULL, NULL);
-    std::cout << result <<std::endl;
-    avformat_find_stream_info(jpgFormat, NULL);
-    av_dump_format(jpgFormat, 0, filename, 0);
-    
-
-    //jpgCodec = jpgFormat->streams[0]->codec; // get the stream at its start
-
-    //std::cout << jpgCodec << std::endl;
-    //jpgCodec->pix_fmt = AV_PIX_FMT_YUV420P; // Set the coolFormat to a standard JPG.
-    AVCodec * jpgDec = avcodec_find_decoder(jpgFormat->streams[0]->codecpar->codec_id);
-    AVCodecContext *jpgCodec = avcodec_alloc_context3(jpgDec);
-    int check = avcodec_parameters_to_context(jpgCodec, jpgFormat->streams[0]->codecpar);
-    // Open the Codec
-    avcodec_open2(jpgCodec, jpgDec, NULL);
-
-    AVFrame * coolFrame;
-    //allocate space for the new frame
-    coolFrame = av_frame_alloc();
-    //set demensions
-    coolFrame->height = jpgCodec->height;
-    coolFrame->width = jpgCodec->width;
-    bool done;
-    std::cout << "test" << std::endl;
-    AVPacket *jpgPacket;
-    jpgPacket = av_packet_alloc();
-    int decode_result;
-    int i = 5;
-    FILE *f;
-    f = fopen(filename, "rb");
-    while (!feof(f)) {
-        AVCodecParserContext * parser = av_parser_init(jpgCodec->codec_id);
-        std::cout << "test2" << std::endl;
-        uint8_t inbuf[4096];
-        /* read raw data from the input file */
-        size_t data_size = fread(inbuf, 1, 4096, f);
-        if (!data_size)
-            break;
-        std::cout << "test3" << std::endl;
-        /* use the parser to split the data into frames */
-        uint8_t* data = inbuf;
-        
-        while (data_size > 0) {
-            std::cout << "testloop1" << std::endl;
-            int ret = av_parser_parse2(parser, jpgCodec, &jpgPacket->data, &jpgPacket->size,
-                                   data, data_size, AV_NOPTS_VALUE, AV_NOPTS_VALUE, 0);
-            if (ret < 0) {
-                fprintf(stderr, "Error while parsing\n");
-                exit(1);
-            }
-            std::cout << "testloop2" << std::endl;
-            data      += ret;
-            data_size -= ret;
-            bool gotData;
-            
-            if (jpgPacket->size){
-                std::cout << "testloopif3" << std::endl;
-                decode(jpgCodec, coolFrame, gotData, jpgPacket);
-            }
-        }
-
-    }
-        fclose(f);
-    /*while(av_read_frame(jpgFormat, &jpgPacket) >= 0)
-    //{
-        //if(jpgPacket.stream_index == 0)
-        //{
-        //Decode the frame from the first stream index
-        //decode_result = decode(jpgCodec,coolFrame, done, &jpgPacket);
-
-        av_read_frame(jpgFormat, &jpgPacket); // Read frames and save  - source: Dranger
-        std::cout << jpgPacket.data << std::endl;
-        // Decode video frames - source: all other deprecations
-        avcodec_send_packet(jpgCodec, &jpgPacket);
-        avcodec_receive_frame(jpgCodec, coolFrame);
-        std::cout << *coolFrame->data << std::endl;
-
-        //if(done)
-        //{
-            // Convert the frame to cool coolFormat
-            std::cout <<"now converting" << std::endl;
-            coolFrame = coolConvert(coolFrame);
-            std::cout << *coolFrame->data << "Buggy bug?" <<std::endl;
-        //}
-        //}*/
-        // Free the packet
-        av_packet_unref(jpgPacket);
-    //}
-    // Closes the codec
-    avcodec_close(jpgCodec);
-    // Cloes the coolFormat
-    avformat_close_input(&jpgFormat);
-    //FF_ENABLE_DEPRECATION_WARNINGS
-    return coolFrame;
+  av_free(coolFrame);
+  avcodec_close(coolContext);
+  av_free(coolContext);
 }
 
-// Used to decode a frame, given a context, frame, and passing a bool
+
+int main(int argc, char *argv[])
+{
+  std::cout << "Starting up the Bouncer" << std::endl;
+  std::string file_name = argv[1];
+      if(file_name.substr(file_name.length()-4,file_name.length()) != ".jpg"){
+              std::cout << "File must be a jpg!" << std::endl;
+              return 1;
+      }
+  std::cout << "Got the right file type" <<std::endl;
+  AVFrame * backFrame = getBackground(argv[1]); 
+
+  int ballSize = sqrt(backFrame->width * backFrame->height) * .075;
+
+  for (int i = 0; i < 300; i++){
+    AVFrame* tempFrame = makeRGB(backFrame, AV_PIX_FMT_RGB24);
+    makeBall(tempFrame, ballSize, backFrame->height - backFrame->height/3, ballSize);
+    saveCool(tempFrame, i);
+    av_free(tempFrame);
+  }
+  return 0;
+}
+
+
+// Used to decode a coolFrame, given a coolContext, coolFrame, and an int used as a bool
 // found at https://blogs.gentoo.org/lu_zero/2016/03/29/new-avcodec-api/
-int decode(AVCodecContext *context, AVFrame *frame, bool gotData, AVPacket *jpgPacket)
+int decode(AVCodecContext *coolContext, AVFrame *coolFrame, int * gotData, AVPacket *jpgPacket)
 {
     int ret;
 
-    gotData = false;
+    *gotData = 0;
 
     if (jpgPacket) {
-        ret = avcodec_send_packet(context, jpgPacket);
+        ret = avcodec_send_packet(coolContext, jpgPacket);
         // In particular, we don't expect AVERROR(EAGAIN), because we read all
         // decoded frames with avcodec_receive_frame() until done.
         if (ret < 0)
             return ret == AVERROR_EOF ? 0 : ret;
     }
 
-    ret = avcodec_receive_frame(context, frame);
+    ret = avcodec_receive_frame(coolContext, coolFrame);
     if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
         return ret;
     if (ret >= 0)
-        gotData = true;
+        *gotData = 1;
 
     return 0;
 }
 
+// Used to encode a coolFrame, given a coolContext, coolFrame, and an int used as a bool
 // found at https://blogs.gentoo.org/lu_zero/2016/03/29/new-avcodec-api/
-/*int encode(AVCodecContext *avctx, AVPacket *jpgPacket, int *got_packet, AVFrame *frame)
+int encode(AVCodecContext *avctx, AVPacket *jpgPacket, AVFrame *coolFrame, int *got_packet)
 {
     int ret;
 
     *got_packet = 0;
     std::cout <<"enc1" << std::endl;
-    std::cout <<avctx <<" : " << frame << std::endl;
-    ret = av_frame_make_writable(frame);
+    std::cout <<avctx <<" : " << coolFrame << std::endl;
+    ret = av_frame_make_writable(coolFrame);
     std::cout <<"enc1.5:" << ret << std::endl;
-    ret = avcodec_send_frame(avctx, frame);
+    ret = avcodec_send_frame(avctx, coolFrame);
 
     std::cout <<"enc2" << std::endl;
     ret = avcodec_receive_packet(avctx, jpgPacket);
@@ -260,74 +286,4 @@ int decode(AVCodecContext *context, AVFrame *frame, bool gotData, AVPacket *jpgP
         return 0;
 
     return ret;
-}*/
-
-void encode(AVCodecContext *enc_ctx, AVFrame *frame, AVPacket *jpgPacket)
-{
-    int ret;
-    /* send the frame to the encoder */
-    if (frame)
-        printf("Send frame %3"PRId64"\n", frame->pts);
-    ret = avcodec_send_frame(enc_ctx, frame);
-    if (ret < 0) {
-        fprintf(stderr, "Error sending a frame for encoding\n");
-        exit(1);
-    }
-    while (ret >= 0) {
-        ret = avcodec_receive_packet(enc_ctx, jpgPacket);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-            return;
-        else if (ret < 0) {
-            fprintf(stderr, "Error during encoding\n");
-            exit(1);
-        }
-        //printf("Write packet %3"PRId64" (size=%5d)\n", jpgPacket->pts, jpgPacket->size);
-        //fwrite(jpgPacket->data, 1, jpgPacket->size, outfile);
-        //av_packet_unref(jpgPacket);
-    }
-}
-
-/**
- * Converts the Frame into the coolest coolFormat
- * Returns an AVFrame 
- */
-AVFrame* coolConvert(AVFrame * input_frame)
-{
-    AVPixelFormat coolFormat = AV_PIX_FMT_RGB24;
-    // Convert our Frame to a specified color schmeme. 
-    // Use a second Frame to store this coolFormat of the picture
-    AVFrame * coolFrame;
-    
-    coolFrame = av_frame_alloc();
-
-    // Use these buffers to store temp data
-    const uint8_t *buffer;
-    int num_bytes;
-    std::cout <<"test1" << std::endl;
-    // Determine required buffer size and allocate buffer
-    num_bytes = av_image_get_buffer_size(coolFormat, input_frame->width, input_frame->height, 1);
-    buffer = (uint8_t *)av_malloc(num_bytes);
-    std::cout <<"test2" << std::endl;
-    coolFrame->format = coolFormat;
-
-    // set up the output width, height, coolFormat
-    coolFrame->height = input_frame->height;
-    coolFrame->width =  input_frame->width;
-    std::cout <<"test3" << std::endl;
-    //create a scaler context from the input frame and intended frame
-    struct SwsContext *scaler = NULL;
-    scaler = sws_getContext(input_frame->width,input_frame->height,AV_PIX_FMT_YUV420P,input_frame->width,input_frame->height,AV_PIX_FMT_RGB24,SWS_BILINEAR,NULL,NULL,NULL);
-    //copy the image data into a buffer
-    std::cout <<"test5" << std::endl;
-    // push the buffer into our image
-    av_image_fill_arrays(coolFrame->data,coolFrame->linesize, buffer, coolFormat, input_frame->width, input_frame->height, 1);
-    //av_image_fill_arrays (picture->data, picture->linesize, picture_buf, pix_fmt, width, height, 1);
-    std::cout <<"test6" << std::endl;
-    //rescale the image
-    sws_scale (scaler,(uint8_t const * const *)input_frame->data,input_frame->linesize,0,input_frame->height,coolFrame->data,coolFrame->linesize);
-    std::cout <<"test7" << std::endl;
-    // Free memory for original picture
-    av_free(scaler);
-    std::cout <<"test8" << std::endl;
-    return coolFrame;
 }
