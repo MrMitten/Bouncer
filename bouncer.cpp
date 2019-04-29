@@ -24,87 +24,27 @@ AVFrame* makeRGB(AVFrame * inFrame, AVPixelFormat form);
 AVFrame* getBackground(char *coolName);
 void saveCool(AVFrame *inFrame, int frameNum);
 
-/**
- * @brief This method is used to draw a ball onto a frame. It takes in a "start" Y and X cord, a frame to draw on, and a ball Size. It
- * moves the ball in the frame using some simple math. The ball that is drawn is blue, with animated shading.
- **/
-void makeBall(AVFrame *coolFrame, int Xcord, int Ycord, int ballSize)
+
+int main(int argc, char *argv[])
 {
-  //static double used for storing the Y cord out of scope
-  double static moveY = 0;
-  moveY = moveY + .16; //move our Y by a set amount per frame
-  moveY = fmod(moveY,(3 * 3.14159));//mod it by a the ends of a sin curve. We use 3 to produce a little "bump" at the midpoint of the anim.
-  int yPos =  -1 *Ycord/2.5* sin(moveY);//set position using sin func
-  Ycord -= yPos; //Adjust new Y acoord-ingly
-
-  //Used to check if we are moving left or right
-  bool static right = true;
-  //Stores the current X modifier
-  int static precord = 0;
-  if(right){
-  precord += coolFrame->width*.01; //move 1% of the screen width
-  Xcord += precord;//Set as new cord
-  if(Xcord > (coolFrame->width - ballSize/2))//if we have "hit" the end of the image
-    right = false;
-  }
-  else{//going left
-  precord -= coolFrame->width*.01;//move 1% of the screen width
-  Xcord += precord;
-  if(Xcord < ballSize/2)//if we have "hit" the start of the image
-    right = true;
-  }
-  for (int i = 0; i < coolFrame->height; i++)
-  {
-    for (int j = 0; j < coolFrame->width * 3; j=j+3)
-    {
-      //Calculate the distance from midpoint of our ball
-      int y = i;
-      int x = j / 3;
-      y = (Ycord - y)*(Ycord - y);
-      x = (Xcord - x)*(Xcord - x);
-
-      int dis = sqrt( x  + y );
-
-      if (ballSize > dis)//only draw on pixels within the ball, so check pixel distance from center
-      {
-        // based off the pixel dis from center calculate the amount of green to simulate shading.
-        //NOTE: we totally could have done a ball with normal shading, but we thought the animated pulsating looked way cooler
-        double green = ((dis)*10 + yPos) % 255;
-    
-        coolFrame->data[0][i*coolFrame->linesize[0]+j] = 61; // put the red pixel data in the frame where we wanna draw our ball
-        coolFrame->data[0][i*coolFrame->linesize[0]+j+1] = (int)green;// put in green with a modifier so it changes based off dis to the center (so it looks .cool)
-        coolFrame->data[0][i*coolFrame->linesize[0]+j+2] = 239;  // put in the blue    
+  std::cout << "Starting up the Bouncer" << std::endl;
+  std::string file_name = argv[1];
+      if(file_name.substr(file_name.length()-4,file_name.length()) != ".jpg"){
+              std::cout << "File must be a jpg!" << std::endl;
+              return 1;
       }
-    }
+  std::cout << "Got the right file type" <<std::endl;
+  AVFrame * backFrame = getBackground(argv[1]); 
+
+  int ballSize = sqrt(backFrame->width * backFrame->height) * .075;
+
+  for (int i = 0; i < 300; i++){
+    AVFrame* tempFrame = makeRGB(backFrame, AV_PIX_FMT_RGB24);
+    makeBall(tempFrame, ballSize, backFrame->height - backFrame->height/3, ballSize);
+    saveCool(tempFrame, i);
+    av_free(tempFrame);
   }
-}
-
-//Code below modified from https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/scaling_video.c 
-//method is used to translate whatever format we get into rgb4 since that is what our cool files use.
-AVFrame* makeRGB(AVFrame * inFrame, AVPixelFormat form)
-{
-  std::cout << "entering convert" << std::endl;
-  //Allocate the converted frame and set its params
-  AVFrame * conFrame = av_frame_alloc();
-
-  conFrame->height = inFrame->height;
-  conFrame->format = AV_PIX_FMT_RGB24;
-  conFrame->width =  inFrame->width;
- 
-  //Used for rescalling and converting between formats
-  struct SwsContext *scalar = sws_getContext(inFrame->width,inFrame->height,form,conFrame->width,conFrame->height,AV_PIX_FMT_RGB24,SWS_BICUBIC,NULL,NULL,NULL);
-  //calculate the size of our temporary buffer, and create it
-  int buffyBities = av_image_get_buffer_size(AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
-  uint8_t *buffer = (uint8_t *)av_malloc(buffyBities * sizeof(uint8_t));
-
-  //fill the conFrame with "empty" data
-  av_image_fill_arrays(conFrame->data,conFrame->linesize, buffer, AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
-  //Scale the inFrame image into rgb24, send into conFrame.
-  sws_scale (scalar,(const uint8_t * const *)inFrame->data,inFrame->linesize,0,inFrame->height,conFrame->data,conFrame->linesize);
-
-  av_free(scalar);
-  //return the converted frame
-  return conFrame;
+  return 0;
 }
 
 /**
@@ -167,6 +107,91 @@ AVFrame* getBackground(char *coolName)
 }
 
 
+//Code below modified from https://github.com/FFmpeg/FFmpeg/blob/master/doc/examples/scaling_video.c 
+//method is used to translate whatever format we get into rgb4 since that is what our cool files use.
+AVFrame* makeRGB(AVFrame * inFrame, AVPixelFormat form)
+{
+  std::cout << "entering convert" << std::endl;
+  //Allocate the converted frame and set its params
+  AVFrame * conFrame = av_frame_alloc();
+
+  conFrame->height = inFrame->height;
+  conFrame->format = AV_PIX_FMT_RGB24;
+  conFrame->width =  inFrame->width;
+ 
+  //Used for rescalling and converting between formats
+  struct SwsContext *scalar = sws_getContext(inFrame->width,inFrame->height,form,conFrame->width,conFrame->height,AV_PIX_FMT_RGB24,SWS_BICUBIC,NULL,NULL,NULL);
+  //calculate the size of our temporary buffer, and create it
+  int buffyBities = av_image_get_buffer_size(AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
+  uint8_t *buffer = (uint8_t *)av_malloc(buffyBities * sizeof(uint8_t));
+
+  //fill the conFrame with "empty" data
+  av_image_fill_arrays(conFrame->data,conFrame->linesize, buffer, AV_PIX_FMT_RGB24, inFrame->width, inFrame->height, 1);
+  //Scale the inFrame image into rgb24, send into conFrame.
+  sws_scale (scalar,(const uint8_t * const *)inFrame->data,inFrame->linesize,0,inFrame->height,conFrame->data,conFrame->linesize);
+
+  av_free(scalar);
+  //return the converted frame
+  return conFrame;
+}
+
+
+/**
+ * @brief This method is used to draw a ball onto a frame. It takes in a "start" Y and X cord, a frame to draw on, and a ball Size. It
+ * moves the ball in the frame using some simple math. The ball that is drawn is blue, with animated shading.
+ **/
+void makeBall(AVFrame *coolFrame, int Xcord, int Ycord, int ballSize)
+{
+  //static double used for storing the Y cord out of scope
+  double static moveY = 0;
+  moveY = moveY + .16; //move our Y by a set amount per frame
+  moveY = fmod(moveY,(3 * 3.14159));//mod it by a the ends of a sin curve. We use 3 to produce a little "bump" at the midpoint of the anim.
+  int yPos =  -1 *Ycord/2.5* sin(moveY);//set position using sin func
+  Ycord -= yPos; //Adjust new Y acoord-ingly
+
+  //Used to check if we are moving left or right
+  bool static right = true;
+  //Stores the current X modifier
+  int static precord = 0;
+  if(right){
+  precord += coolFrame->width*.01; //move 1% of the screen width
+  Xcord += precord;//Set as new cord
+  if(Xcord > (coolFrame->width - ballSize/2))//if we have "hit" the end of the image
+    right = false;
+  }
+  else{//going left
+  precord -= coolFrame->width*.01;//move 1% of the screen width
+  Xcord += precord;
+  if(Xcord < ballSize/2)//if we have "hit" the start of the image
+    right = true;
+  }
+  for (int i = 0; i < coolFrame->height; i++)
+  {
+    for (int j = 0; j < coolFrame->width * 3; j=j+3)
+    {
+      //Calculate the distance from midpoint of our ball
+      int y = i;
+      int x = j / 3;
+      y = (Ycord - y)*(Ycord - y);
+      x = (Xcord - x)*(Xcord - x);
+
+      int dis = sqrt( x  + y );
+
+      if (ballSize > dis)//only draw on pixels within the ball, so check pixel distance from center
+      {
+        // based off the pixel dis from center calculate the amount of green to simulate shading.
+        //NOTE: we totally could have done a ball with normal shading, but we thought the animated pulsating looked way cooler
+        double green = ((dis)*10 + yPos) % 255;
+    
+        coolFrame->data[0][i*coolFrame->linesize[0]+j] = 61; // put the red pixel data in the frame where we wanna draw our ball
+        coolFrame->data[0][i*coolFrame->linesize[0]+j+1] = (int)green;// put in green with a modifier so it changes based off dis to the center (so it looks .cool)
+        coolFrame->data[0][i*coolFrame->linesize[0]+j+2] = 239;  // put in the blue    
+      }
+    }
+  }
+}
+
+
 void saveCool(AVFrame *inFrame, int frameNum)
 {
   int is_set = 0;
@@ -213,29 +238,6 @@ void saveCool(AVFrame *inFrame, int frameNum)
   av_free(coolFrame);
   avcodec_close(coolContext);
   av_free(coolContext);
-}
-
-
-int main(int argc, char *argv[])
-{
-  std::cout << "Starting up the Bouncer" << std::endl;
-  std::string file_name = argv[1];
-      if(file_name.substr(file_name.length()-4,file_name.length()) != ".jpg"){
-              std::cout << "File must be a jpg!" << std::endl;
-              return 1;
-      }
-  std::cout << "Got the right file type" <<std::endl;
-  AVFrame * backFrame = getBackground(argv[1]); 
-
-  int ballSize = sqrt(backFrame->width * backFrame->height) * .075;
-
-  for (int i = 0; i < 300; i++){
-    AVFrame* tempFrame = makeRGB(backFrame, AV_PIX_FMT_RGB24);
-    makeBall(tempFrame, ballSize, backFrame->height - backFrame->height/3, ballSize);
-    saveCool(tempFrame, i);
-    av_free(tempFrame);
-  }
-  return 0;
 }
 
 
